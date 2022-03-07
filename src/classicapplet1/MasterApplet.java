@@ -63,9 +63,6 @@ public class MasterApplet extends Applet implements ISO7816, AppletEvent, Extend
     final static byte TN_CURRENT_CLA = 1;
     private byte[] transientBytes;
 
-    private MessageDigest digest;
-    private Signature signature;
-    private Cipher rsa;
 
     private AccessControl accessControl;
     private static final short TEMP_SIZE = 2048;
@@ -75,14 +72,10 @@ public class MasterApplet extends Applet implements ISO7816, AppletEvent, Extend
     private PACEProtocol paceProtocol = null;
     private boolean locked;
 
-    private byte[] additionalData;
+    private byte[] userAccountData;
     private byte[] documentNumber;
 
-    // ----------- MOC -------------
-    private byte[] fingerPrintArray;
-    private boolean isRequiredMOC;
-    private byte fingerPrintPosition = 0;
-
+    
     // ----------- FOR GENERATE AES KEYS -------------
     private final short PACE_KEY_LENGTH = 0x80;
     private byte[] A;
@@ -107,20 +100,16 @@ public class MasterApplet extends Applet implements ISO7816, AppletEvent, Extend
      * Only this class's install method should create the applet object.
      */
     protected MasterApplet() {
-        transientBytes = JCSystem.makeTransientByteArray(NUM_TRANSIENT_BYTES, JCSystem.CLEAR_ON_RESET);
-        transientShorts = JCSystem.makeTransientShortArray(NUM_TRANSIENT_SHORTS, JCSystem.CLEAR_ON_RESET);
-        transientObjects = JCSystem.makeTransientObjectArray(NUM_TRANSIENT_OBJECTS, JCSystem.CLEAR_ON_RESET);
+        transientBytes = JCSystem.makeTransientByteArray(NUM_TRANSIENT_BYTES, 
+                JCSystem.CLEAR_ON_RESET);
+        transientShorts = JCSystem.makeTransientShortArray(NUM_TRANSIENT_SHORTS, 
+                JCSystem.CLEAR_ON_RESET);
+        transientObjects = JCSystem.makeTransientObjectArray(NUM_TRANSIENT_OBJECTS, 
+                JCSystem.CLEAR_ON_RESET);
         temp = JCSystem.makeTransientByteArray(TEMP_SIZE, JCSystem.CLEAR_ON_DESELECT);
         accessControl = new AccessControl();
-        digest = javacard.security.MessageDigest.getInstance(MessageDigest.ALG_SHA, false);
-        signature = javacard.security.Signature.getInstance(Signature.ALG_RSA_SHA_256_PKCS1, false);
-        rsa = javacardx.crypto.Cipher.getInstance(Cipher.ALG_RSA_PKCS1, false);
         paceProtocol = new PACEProtocol(temp);
         locked = false;
-
-        // MOC
-        isRequiredMOC = false;
-        fingerPrintArray = new byte[500];
 
         documentNumber = new byte[8];
         // FOR AES Keys
@@ -129,7 +118,7 @@ public class MasterApplet extends Applet implements ISO7816, AppletEvent, Extend
         B = new byte[PACE_KEY_LENGTH];
         param_K = new byte[PACE_KEY_LENGTH];
 
-        additionalData = new byte[2000];
+        userAccountData = new byte[2000];
     }
 
     public void uninstall() {
@@ -158,16 +147,16 @@ public class MasterApplet extends Applet implements ISO7816, AppletEvent, Extend
         try {
             switch (ins) {
                 case (byte)0x20:
-                    processVerify1(apdu);
+                    processVerify(apdu);
                     break;
                 case (byte)0x2C:
                     processResetRetryCounter(apdu);
                     break;
                 case (byte) 0xDC:
-                    processPutAdditionalData(apdu);
+                    processUserAccountlData(apdu);
                     break;
                 case (byte) 0xCC:
-                    processGetAdditionalData(apdu);
+                    processGetUserAccountData(apdu);
                     break;
                 case (byte) 0x88:
                     generateKey(apdu);
@@ -185,7 +174,7 @@ public class MasterApplet extends Applet implements ISO7816, AppletEvent, Extend
     }
 
 
-    private void processPutAdditionalData(APDU apdu) {
+    private void processUserAccountlData(APDU apdu) {
         byte[] buffer = apdu.getBuffer();
         short len = apdu.setIncomingAndReceive();
         short offset = apdu.getOffsetCdata();
@@ -211,27 +200,24 @@ public class MasterApplet extends Applet implements ISO7816, AppletEvent, Extend
 
         len = Util.makeShort(temp[0], temp[1]);
 
-        if (len >= (short) additionalData.length) {
+        if (len >= (short) userAccountData.length) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
-        Util.arrayFillNonAtomic(additionalData, (short) 0, (short) additionalData.length, (byte) 0);
-        Util.arrayCopyNonAtomic(temp, (short) 2, additionalData, (short) 0, len);
+        Util.arrayFillNonAtomic(userAccountData, (short) 0, (short) userAccountData.length, (byte) 0);
+        Util.arrayCopyNonAtomic(temp, (short) 2, userAccountData, (short) 0, len);
     }
 
-    private void processGetAdditionalData(APDU apdu) {
+    private void processGetUserAccountData(APDU apdu) {
         byte[] buffer = apdu.getBuffer();
         short length = 0;
-        if (additionalData != null) {
-            length = (short) additionalData.length;
+        if (userAccountData != null) {
+            length = (short) userAccountData.length;
         }
-
-        // check verified user or master pin
-        // 9.10.2018 commented line behind
-        //accessControl.checkUserOrMaster();
+        accessControl.checkUserOrMaster();
         temp[16] = (byte) ((length >> 0x08) & 0xff);
         temp[17] = (byte) (length & 0xff);
         short le = 0;
-        Util.arrayCopyNonAtomic(additionalData, (short) 0, temp, (short) 18, length);
+        Util.arrayCopyNonAtomic(userAccountData, (short) 0, temp, (short) 18, length);
         le = paceProtocol.encryptPACE(temp, (short) 16, (short) (length + 2), temp, (short) 0);
 
         apdu.setOutgoing();
@@ -289,7 +275,7 @@ public class MasterApplet extends Applet implements ISO7816, AppletEvent, Extend
         locked = true;
     }
 
-    private void processVerify1(APDU apdu) {
+    private void processVerify(APDU apdu) {
         byte[] buffer = apdu.getBuffer();
         byte byteRead = (byte) apdu.setIncomingAndReceive();
         if (locked) {
